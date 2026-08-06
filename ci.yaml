@@ -1,0 +1,49 @@
+---
+
+  # executable_name:
+  #  test_name:
+  #    test options...
+
+  tutorial_qpt_extraction:
+    test_0:
+      inputs: "--order 0 --refinement 4"
+    test_1:
+      inputs: "--order 1 --refinement 4"
+    test_2:
+      inputs: "--order 2 --refinement 4"
+    test_3:
+      inputs: "--order 3 --refinement 4"
+    test_4:
+      inputs: "--order 4 --refinement 4"
+    test_5:
+      inputs: "--order 5 --refinement 4"
+    test_6:
+      inputs: "--order 6 --refinement 4"
+
+  integration:
+    order_0:
+      inputs: "--order 0 "
+    order_1:
+      inputs: "--order 1 "
+    order_2:
+      inputs: "--order 2 "
+    order_3:
+      inputs: "--order 3 "
+    order_4:
+      inputs: "--order 4 "
+    order_5:
+      inputs: "--order 5 "
+    order_6:
+      inputs: "--order 6 "
+    order_7:
+      inputs: "--order 7 "
+    order_8:
+      inputs: "--order 8 "
+      skip: "cpu cuda hip" # fails due to limitations on numerical precision
+    order_9:
+      inputs: "--order 9 "
+      skip: "cpu cuda hip" # fails due to limitations on numerical precision
+
+  example_assembly:
+    default:
+      inputs: " "

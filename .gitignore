@@ -1,0 +1,69 @@
+
+log*
+*.dylib
+
+# mfem
+*.gf
+*.mesh
+
+*exe
+*out
+
+#libs
+*dylib
+
+# c++
+*.out
+*.err
+*.o
+.vscode
+*.d
+
+# Codex
+.codex
+
+# matlab
+*.asv
+*.mat
+
+# mac
+.DS_Store
+
+# python
+__pycache__
+*.json
+
+# images
+*.png
+
+# cuda
+*.ncu-rep
+
+# dirs
+tpl_source
+build
+install
+CAL_LIB
+
+*.gf
+*.mesh
+*.fes
+
+# other
+*.tmp
+*.gch
+*.log
+*.core
+*.swp
+*.report
+*.ult
+*.replay
+*.replay.bin
+*.raw
+caliper_lib_path*
+.dylib
+*.txt
+
+# Doxygen
+html
+latex

@@ -1,0 +1,18 @@
+[submodule "tpl/glvis"]
+	path = tpl/glvis
+	url = https://github.com/GLVis/glvis.git
+[submodule "tpl/mfem"]
+	path = tpl/mfem
+	url = https://github.com/mfem/mfem.git
+[submodule "tpl/mfem_tpls"]
+	path = tpl/mfem_tpls
+	url = https://github.com/mfem/tpls.git
+[submodule "tpl/BoBa"]
+	path = tpl/BoBa
+	url = https://github.com/llnl/BoBa.git
+[submodule "tpl/glm"]
+	path = tpl/glm
+	url = https://github.com/g-truc/glm.git
+[submodule "tpl/SDL"]
+	path = tpl/SDL
+	url = https://github.com/libsdl-org/SDL.git
