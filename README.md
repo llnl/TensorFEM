@@ -10,7 +10,7 @@ It is a highly experimental codebase that is likely to change frequently.
 ## Citation
 Please use this citation when citing TensorFEM.
 ```
-  @misc{bobalibrary,
+  @misc{tensorfemlibrary,
     title  = {TensorFEM: Tensor Finite Element Solvers},
     author = {Guthrey, Pierson and
               Sands, Willian and
@@ -19,6 +19,9 @@ Please use this citation when citing TensorFEM.
               Haut, Terry},
     url    = {https://github.com/llnl/tensorfem},
     year   = {2026}
+    howpublished = {[Computer Software] \url{https://doi.org/10.11578/dc.20260817.1}},
+    abstractNote = {The purpose of this research library is to demonstrate how to combine the BoBa tensor library and MFEM finite element library to enable tensorized finite element methods.},
+    doi = {10.11578/dc.20260817.1}
   }
 ```
 
