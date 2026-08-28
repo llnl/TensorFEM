@@ -26,7 +26,7 @@ variables:
   H100_MACHINE: "matrix"
   HIP_MACHINE: "tuolumne"
 
-  TENSORFEM_TPLS_FARM: "/usr/workspace/boba_dev/tensorfem_build_farms/2026_08_11"
+  TENSORFEM_TPLS_FARM: "/usr/workspace/boba_dev/tensorfem_build_farms/2026_08_27"
 
 include:
   - project: 'lc-templates/id_tokens'
