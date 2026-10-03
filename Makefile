@@ -47,6 +47,7 @@ EXAMPLES_DIR=./examples
 # Build rules
 all: \
 	tensor_fem${NAME_FLAG}.o \
+	tutorial_basic \
 	tutorial_qpt_extraction \
 	integration \
 	example_assembly \
@@ -57,19 +58,28 @@ all: \
 tensor_fem${NAME_FLAG}.o: ${TENSORFEM_SRC_DIR}/tensor_fem.cpp ${TENSORFEM_INC_DIR}/tensor_fem.hpp
 	${COMPILE} ${OPTS} ${DEPFLAGS} -c $< -o tensor_fem${NAME_FLAG}.o
 
-##
-##  integration
+## tutorial_basic
 ##
 
-integration: integration${NAME_FLAG}.out
+tutorial_basic: tutorial_basic${NAME_FLAG}.out
 	echo "Done making $@${NAME_FLAG}.out"
 
-integration${NAME_FLAG}.out: integration${NAME_FLAG}.o boba${NAME_FLAG}.o
+tutorial_basic${NAME_FLAG}.out: tutorial_basic${NAME_FLAG}.o boba${NAME_FLAG}.o
 	${LINK} -o $@ $^ ${LIBS}
 
-integration${NAME_FLAG}.o: ${EXAMPLES_DIR}/tutorial_integration/integration.cpp tensor_fem${NAME_FLAG}.o boba${NAME_FLAG}.o
-	${COMPILE} ${OPTS} ${DEPFLAGS} -c ${EXAMPLES_DIR}/tutorial_integration/integration.cpp -o integration${NAME_FLAG}.o
+tutorial_basic${NAME_FLAG}.o: ${EXAMPLES_DIR}/tutorial_basic/tutorial_basic.cpp tensor_fem${NAME_FLAG}.o boba${NAME_FLAG}.o
+	${COMPILE} ${OPTS} ${DEPFLAGS} -c $< -o $@
 
+## integration
+##
+integration: integration${NAME_FLAG}.out
+	echo "Done making $@${NAME_FLAG}.out"
+integration${NAME_FLAG}.out: integration${NAME_FLAG}.o boba${NAME_FLAG}.o
+	${LINK} -o $@ $^ ${LIBS}
+integration${NAME_FLAG}.o: ${EXAMPLES_DIR}/tutorial_integration/integration.cpp tensor_fem${NAME_FLAG}.o boba${NAME_FLAG}.o
+	${COMPILE} ${OPTS} ${DEPFLAGS} -c $< -o $@
+
+##
 ##
 ## example_assembly
 ##
@@ -83,19 +93,16 @@ example_assembly${NAME_FLAG}.out: example_assembly${NAME_FLAG}.o boba${NAME_FLAG
 example_assembly${NAME_FLAG}.o: ${EXAMPLES_DIR}/example_assembly/example_assembly.cpp tensor_fem${NAME_FLAG}.o boba${NAME_FLAG}.o
 	${COMPILE} ${OPTS} ${DEPFLAGS} -c ${EXAMPLES_DIR}/example_assembly/example_assembly.cpp -o example_assembly${NAME_FLAG}.o
 
-##
 ## tutorial_qpt_extraction
 ##
-
 tutorial_qpt_extraction: tutorial_qpt_extraction${NAME_FLAG}.out
 	echo "Done making $@${NAME_FLAG}.out"
-
 tutorial_qpt_extraction${NAME_FLAG}.out: tutorial_qpt_extraction${NAME_FLAG}.o boba${NAME_FLAG}.o
 	${LINK} -o $@ $^ ${LIBS}
-
 tutorial_qpt_extraction${NAME_FLAG}.o: ${EXAMPLES_DIR}/tutorial_qpt_extraction/tutorial_qpt_extraction.cpp tensor_fem${NAME_FLAG}.o boba${NAME_FLAG}.o
-	${COMPILE} ${OPTS} ${DEPFLAGS} -c ${EXAMPLES_DIR}/tutorial_qpt_extraction/tutorial_qpt_extraction.cpp -o tutorial_qpt_extraction${NAME_FLAG}.o
+	${COMPILE} ${OPTS} ${DEPFLAGS} -c $< -o $@
 
+##
 -include $(wildcard *.d)
 
 # Clean rule

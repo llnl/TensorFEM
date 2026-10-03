@@ -4,6 +4,10 @@
   #  test_name:
   #    test options...
 
+  tutorial_basic:
+    tutorial_basic:
+      inputs: "--order 1"
+
   tutorial_qpt_extraction:
     test_0:
       inputs: "--order 0 --refinement 4"
@@ -39,10 +43,7 @@
       inputs: "--order 7 "
     order_8:
       inputs: "--order 8 "
-      skip: "cpu cuda hip" # fails due to limitations on numerical precision
-    order_9:
-      inputs: "--order 9 "
-      skip: "cpu cuda hip" # fails due to limitations on numerical precision
+      skip: "cpu cuda hip" # order 8 is the limit before factorial(int) overflows
 
   example_assembly:
     default:
