@@ -18,7 +18,7 @@ Please use this citation when citing TensorFEM.
               Hollett, Max and
               Haut, Terry},
     url    = {https://github.com/llnl/tensorfem},
-    year   = {2026}
+    year   = {2026},
     howpublished = {[Computer Software] \url{https://doi.org/10.11578/dc.20260817.1}},
     abstractNote = {The purpose of this research library is to demonstrate how to combine the BoBa tensor library and MFEM finite element library to enable tensorized finite element methods.},
     doi = {10.11578/dc.20260817.1}
