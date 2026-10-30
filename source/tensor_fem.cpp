@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 /**
  * @file tensor_fem.cpp
  * @brief TensorFEM runtime initialization wrappers.

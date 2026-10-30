@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 #pragma once
 
 /**
@@ -25,6 +27,16 @@ namespace tensor_fem
 
 static constexpr ::boba::execution_space space = ::boba::default_execution_space;
 static constexpr ::boba::execution_space host_space = ::boba::host_space;
+
+/** @brief Return whether TensorFEM was built in CI mode. */
+inline constexpr bool is_tensorfem_ci()
+{
+#ifdef TENSORFEM_CI
+   return true;
+#else
+   return false;
+#endif
+}
 
 /**
  * @brief Convert an MFEM sparse matrix to a BoBa dense matrix.
@@ -1685,22 +1697,25 @@ void glvis_save(
    const mfem::GridFunction& gf,
    std::string name)
 {
-#ifndef TENSORFEM_CI
-   // Save the fes
-   std::ofstream fes_ofs(name + ".fes");
-   fes_ofs.precision(8);
-   fespace.Save(fes_ofs);
-   // Save the mesh
-   std::ofstream mesh_ofs(name + ".mesh");
-   mesh_ofs.precision(8);
-   mesh.Print(mesh_ofs);
-   // Save the gridfunction
-   std::ofstream sol_ofs(name + ".gf");
-   sol_ofs.precision(8);
-   gf.Save(sol_ofs);
-#else
-   boba_warn("CI mode is on, not saving!");
-#endif
+   if constexpr (is_tensorfem_ci())
+   {
+      boba_warn("CI mode is on, not saving!");
+   }
+   else
+   {
+      // Save the fes
+      std::ofstream fes_ofs(name + ".fes");
+      fes_ofs.precision(8);
+      fespace.Save(fes_ofs);
+      // Save the mesh
+      std::ofstream mesh_ofs(name + ".mesh");
+      mesh_ofs.precision(8);
+      mesh.Print(mesh_ofs);
+      // Save the gridfunction
+      std::ofstream sol_ofs(name + ".gf");
+      sol_ofs.precision(8);
+      gf.Save(sol_ofs);
+   }
 }
 
 /**
@@ -1715,28 +1730,31 @@ void glvis_visualize(
    mfem::socketstream& sol_sock,
    std::string_view title = "")
 {
-#ifndef TENSORFEM_CI
-   if(not(sol_sock.good()))
+   if constexpr (is_tensorfem_ci())
    {
-      std::cout << "socket not good, making" << std::endl;
-      sol_sock.open("localhost", 19916);
+      boba_warn("CI mode is on, not plotting!");
    }
-
-   sol_sock.precision(8);
-   sol_sock << "solution\n" << mesh << gf << " view 0 0 viewcenter 0 0 ";
-   if(not(title.empty()))
+   else
    {
-      sol_sock << " window_title '" << title << "'";
-   }
-   //auto color_option = std::string(36, 'p');
-   //sol_sock << " keys cff" + color_option << "\n" << std::flush;
-   sol_sock << std::flush;
+      if(not(sol_sock.good()))
+      {
+         std::cout << "socket not good, making" << std::endl;
+         sol_sock.open("localhost", 19916);
+      }
 
-   // TODO<feature> figure out how to use plot_caption
-   // << " plot_caption '" << caption << "'"
-#else
-   boba_warn("CI mode is on, not plotting!");
-#endif
+      sol_sock.precision(8);
+      sol_sock << "solution\n" << mesh << gf << " view 0 0 viewcenter 0 0 ";
+      if(not(title.empty()))
+      {
+         sol_sock << " window_title '" << title << "'";
+      }
+      //auto color_option = std::string(36, 'p');
+      //sol_sock << " keys cff" + color_option << "\n" << std::flush;
+      sol_sock << std::flush;
+
+      // TODO<feature> figure out how to use plot_caption
+      // << " plot_caption '" << caption << "'"
+   }
 }
 
 /**
@@ -1748,13 +1766,16 @@ void glvis_visualize(
    const mfem::GridFunction& gf,
    std::string_view title = "")
 {
-#ifndef TENSORFEM_CI
-   mfem::socketstream stream;
-   stream.open("localhost", 19916);
-   glvis_visualize(mesh, gf, stream, title);
-#else
-   boba_warn("CI mode is on, not plotting!");
-#endif
+   if constexpr (is_tensorfem_ci())
+   {
+      boba_warn("CI mode is on, not plotting!");
+   }
+   else
+   {
+      mfem::socketstream stream;
+      stream.open("localhost", 19916);
+      glvis_visualize(mesh, gf, stream, title);
+   }
 }
 
 /**
