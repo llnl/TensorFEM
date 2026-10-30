@@ -10,20 +10,34 @@
  *   u(x,y,0) = 0.
  *
  * Each side of the square is assigned the same bump in its transverse
- * coordinate: u(x,0,t) = u(x,1,t) = g(x) and
- * u(0,y,t) = u(1,y,t) = g(y), where r = 0.3 and
+ * coordinate, multiplied by a time pulse: u(x,0,t) = u(x,1,t) = g(x) p(t)
+ * and u(0,y,t) = u(1,y,t) = g(y) p(t), where r = 0.3 and
  *
  *   g(s) = exp(1/r^2 - 1/(r^2 - (s - 0.5)^2))  if |s - 0.5| < r,
  *          0                                  otherwise.
  *
+ * For pulse duration D (default 0.25), the smooth time envelope is
+ *
+ *   p(t) = exp(4 - 1/((t/D)(1-t/D)))  if 0 < t < D,
+ *          0                         otherwise.
+ *
+ * Thus the initially zero boundary rises to one at t=D/2, falls, and
+ * returns to zero at t=D. Only the inflow portions of the boundary enter
+ * the numerical solution.
+ *
  * The upwind DG flux uses prescribed data only where (a,b) dot n < 0;
  * outflow is determined by the interior solution. MFEM assembles the DG
  * advection, mass, and boundary operators. BoBa carries out SSP RK3 steps
- * with a tensor train matrix and tensor train vectors.
+ * with a tensor train matrix and tensor train vectors. Backward
+ * characteristics give an exact solution: the value is zero until a
+ * characteristic reaches an inflow side, then equals the spatial bump
+ * times the pulse at the time that characteristic entered the domain.
  *
  * Run: make example_advection && ./example_advection_cpu.out --theta 0.7853981633974483
  * To display the final solution, start GLVis with `glvis -server`, then add
  * `--visualize` to the example command.
+ * To check convergence at T=0.1, run
+ * `python3 examples/example_advection/run_convergence.py`.
  */
 
 #include "../common.hpp"
@@ -32,6 +46,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <limits>
 
 namespace
 {
@@ -53,12 +68,42 @@ double bump(double s)
                   1.0 / (radius_squared - distance * distance));
 }
 
+double time_pulse(double time, double duration)
+{
+  if (time <= 0.0 || time >= duration)
+  {
+    return 0.0;
+  }
+  const double phase = time / duration;
+  return std::exp(4.0 - 1.0 / (phase * (1.0 - phase)));
+}
+
+double exact_solution(double x, double y, double time, double a, double b,
+                      double pulse_duration)
+{
+  const double infinity = std::numeric_limits<double>::infinity();
+  const double time_to_x_boundary = a > 0.0 ? x / a :
+                                    a < 0.0 ? (1.0 - x) / -a : infinity;
+  const double time_to_y_boundary = b > 0.0 ? y / b :
+                                    b < 0.0 ? (1.0 - y) / -b : infinity;
+  const double boundary_time = std::min(time_to_x_boundary, time_to_y_boundary);
+  if (boundary_time > time)
+  {
+    return 0.0;
+  }
+  const double amplitude = time_pulse(time - boundary_time, pulse_duration);
+  return amplitude * (time_to_x_boundary <= time_to_y_boundary ?
+                      bump(y - b * boundary_time) :
+                      bump(x - a * boundary_time));
+}
+
 struct Parameters
 {
   size_t resolution = 8;
   size_t order = 1;
   double theta = std::acos(-1.0) / 4.0;
   double end_time = 0.5;
+  double pulse_duration = 0.25;
   double cfl = 0.5;
   bool visualize = false;
 };
@@ -68,25 +113,33 @@ using TrainMatrix = boba::TensorTrainMatrix<2, space, double>;
 
 Train right_hand_side(const TrainMatrix& spatial_operator,
                       const Train& source,
-                      const Train& state)
+                      const Train& state,
+                      double time,
+                      double pulse_duration)
 {
   auto result = spatial_operator * state;
-  result += source;
+  auto inflow = source;
+  inflow *= time_pulse(time, pulse_duration);
+  result += inflow;
   result.round();
   return result;
 }
 
 void step_ssp_rk3(const TrainMatrix& spatial_operator,
                   const Train& source,
+                  double time,
                   double dt,
+                  double pulse_duration,
                   Train& state)
 {
-  auto update = right_hand_side(spatial_operator, source, state);
+  auto update = right_hand_side(spatial_operator, source, state,
+                                time, pulse_duration);
   update *= dt;
   auto stage_one = state + update;
   stage_one.round();
 
-  update = right_hand_side(spatial_operator, source, stage_one);
+  update = right_hand_side(spatial_operator, source, stage_one,
+                           time + dt, pulse_duration);
   update *= dt;
   auto stage_two = stage_one + update;
   stage_two *= 0.25;
@@ -95,7 +148,8 @@ void step_ssp_rk3(const TrainMatrix& spatial_operator,
   stage_two += old_state;
   stage_two.round();
 
-  update = right_hand_side(spatial_operator, source, stage_two);
+  update = right_hand_side(spatial_operator, source, stage_two,
+                           time + 0.5 * dt, pulse_duration);
   update *= dt;
   auto next_state = stage_two + update;
   next_state *= 2.0 / 3.0;
@@ -117,6 +171,8 @@ int main(int argc, char* argv[])
   args.add_optional_argument(input.order, "-p", "--order", "DG polynomial order.");
   args.add_optional_argument(input.theta, "-t", "--theta", "Advection angle in radians.");
   args.add_optional_argument(input.end_time, "-T", "--end_time", "Final time.");
+  args.add_optional_argument(input.pulse_duration, "-D", "--pulse_duration",
+                             "Duration of the smooth inflow pulse.");
   args.add_optional_argument(input.cfl, "-C", "--cfl", "CFL scaling in (0, 1].");
   args.add_optional_argument(input.visualize, "-v", "--visualize",
                              "Show the final solution in GLVis on localhost:19916.");
@@ -127,6 +183,8 @@ int main(int argc, char* argv[])
   boba_always_assert(std::isfinite(input.theta), "Theta must be finite.");
   boba_always_assert(std::isfinite(input.end_time) && input.end_time > 0.0,
                      "End time must be finite and positive.");
+  boba_always_assert(std::isfinite(input.pulse_duration) && input.pulse_duration > 0.0,
+                     "Pulse duration must be finite and positive.");
   boba_always_assert(std::isfinite(input.cfl) && input.cfl > 0.0 && input.cfl <= 1.0,
                      "CFL must lie in (0, 1].");
 
@@ -137,14 +195,42 @@ int main(int argc, char* argv[])
   auto mesh = tensor_fem::make_cartesian_mesh_2d(n, n, 1.0, 1.0);
   mfem::DG_FECollection fec(input.order, 2, mfem::BasisType::GaussLegendre);
   mfem::FiniteElementSpace fes(&mesh, &fec);
+  const long double dense_matrix_bytes = sizeof(double) *
+    static_cast<long double>(fes.GetVSize()) * fes.GetVSize();
+  if (dense_matrix_bytes > 256.0L * 1024.0L * 1024.0L)
+  {
+    std::cerr << "Resolution " << n << " would require more than 256 MiB for"
+              << " one dense 2D matrix. Use a smaller mesh until 2D operator"
+              << " compression is optimized.\n";
+    boba::finalize();
+    return 1;
+  }
 
   auto velocity_x = [a](double, double) { return a; };
   auto velocity_y = [b](double, double) { return b; };
   // On a horizontal side g(y)=0; on a vertical side g(x)=0.
   auto boundary_data = [](double x, double y) { return bump(x) + bump(y); };
 
-  auto advection_matrix = tensor_fem::L_matrix_2d(
-    fes, velocity_x, velocity_y, input.order, n, n);
+  mfem::VectorFunctionCoefficient velocity(2,
+    [a, b](const mfem::Vector&, mfem::Vector& value)
+    {
+      value(0) = a;
+      value(1) = b;
+    });
+  mfem::BilinearForm advection_form(&fes);
+  // Match MFEM's advection example: M du/dt = K u + boundary_rhs.
+  // Assemble(0) retains the face entries needed by the DG flux.
+  advection_form.AddDomainIntegrator(
+    new mfem::ConvectionIntegrator(velocity, -1.0));
+  advection_form.AddInteriorFaceIntegrator(
+    new mfem::NonconservativeDGTraceIntegrator(velocity, -1.0));
+  advection_form.AddBdrFaceIntegrator(
+    new mfem::NonconservativeDGTraceIntegrator(velocity, -1.0));
+  advection_form.Assemble(0);
+  advection_form.Finalize(0);
+  auto advection_matrix = tensor_fem::mfem_ordering_to_tensorfem_ordering(
+    tensor_fem::bilinear_form_to_matrix(advection_form),
+    n, input.order + 1, n);
   auto mass_matrix = tensor_fem::Mass_matrix_2d(
     fes, [](double, double) { return 1.0; }, input.order, n, n);
   auto boundary_vector = tensor_fem::make_inflow_boundary_vector_2d(
@@ -178,8 +264,20 @@ int main(int argc, char* argv[])
 
   boba::Vector<space, double> inverse_mass = host_inverse_mass;
   boba::apply_as_diagonal_left_in_place(inverse_mass, advection_matrix);
-  advection_matrix *= -1.0;
   auto source_vector = boba::elementwise_product(inverse_mass, boundary_vector);
+  if (n <= 8)
+  {
+    mfem::ConstantCoefficient one(1.0);
+    mfem::GridFunction constant_gf(&fes);
+    constant_gf.ProjectCoefficient(one);
+    auto raw_boundary = tensor_fem::inflow_boundary_vector_core(
+      fes, velocity, one);
+    mfem::Vector raw_residual(fes.GetVSize());
+    advection_form.SpMat().Mult(constant_gf, raw_residual);
+    raw_residual += raw_boundary;
+    boba_always_assert(raw_residual.Norml2() < 1.0e-10,
+                       "DG advection assembly must preserve constant states.");
+  }
 
   auto spatial_operator = boba::compress_to_TensorTrainMatrix<2>(
     advection_matrix, {mode_size, mode_size}, {mode_size, mode_size},
@@ -202,7 +300,9 @@ int main(int argc, char* argv[])
   auto probe_train = boba::compress_to_TensorTrain<2>(
     boba::reshape<2>(probe, {mode_size, mode_size}),
     relative_tolerance, absolute_tolerance);
-  auto compressed_update = right_hand_side(spatial_operator, source, probe_train);
+  auto compressed_update = right_hand_side(spatial_operator, source, probe_train,
+                                           0.5 * input.pulse_duration,
+                                           input.pulse_duration);
   const double operator_error = boba::norm_difference_inf(
     full_update, boba::flatten(compressed_update.decompress()));
   boba_always_assert(operator_error < 1.0e-8,
@@ -220,7 +320,8 @@ int main(int argc, char* argv[])
   {
     const double remaining = input.end_time - time;
     const double dt = std::min(max_dt, remaining);
-    step_ssp_rk3(spatial_operator, source, dt, solution);
+    step_ssp_rk3(spatial_operator, source, time, dt,
+                 input.pulse_duration, solution);
     time = (remaining <= max_dt) ? input.end_time : time + dt;
     ++steps;
   }
@@ -228,22 +329,41 @@ int main(int argc, char* argv[])
   auto final_tensor = solution.decompress();
   auto final_vector = boba::flatten(final_tensor);
   auto grid_function = tensor_fem::make_gf_2d(mesh, fes, final_vector, input.order);
+  mfem::FunctionCoefficient exact_coefficient([=](const mfem::Vector& point)
+  {
+    return exact_solution(point(0), point(1), time, a, b,
+                          input.pulse_duration);
+  });
+  const mfem::IntegrationRule* integration_rules[mfem::Geometry::NumGeom] = {};
+  integration_rules[mfem::Geometry::SQUARE] =
+    &mfem::IntRules.Get(mfem::Geometry::SQUARE, 40);
+  const double l2_error = grid_function.ComputeL2Error(exact_coefficient, integration_rules);
+  const double exact_l2_norm = mfem::ComputeLpNorm(2.0, exact_coefficient, mesh,
+                                                   integration_rules);
+  const double relative_l2_error = exact_l2_norm > 0.0 ?
+                                   l2_error / exact_l2_norm :
+                                   std::numeric_limits<double>::quiet_NaN();
+  boba_always_assert(std::isfinite(l2_error) && std::isfinite(exact_l2_norm),
+                     "The exact-solution error and norm must be finite.");
   std::ofstream mesh_file("example_advection.mesh");
   boba_always_assert(mesh_file.good(), "Cannot open example_advection.mesh.");
   mesh.Print(mesh_file);
   grid_function.Save("example_advection.gf");
 
   const double final_norm = boba::norm_frobenius(final_tensor);
-  boba_always_assert(std::isfinite(final_norm) && final_norm > 0.0,
-                     "Expected a finite, nonzero solution driven by inflow.");
+  boba_always_assert(std::isfinite(final_norm),
+                     "Expected a finite solution driven by inflow.");
   if (input.visualize)
   {
     tensor_fem::glvis_visualize(mesh, grid_function, "Advection final solution");
   }
   std::cout << "theta=" << input.theta << " a=" << a << " b=" << b
             << " steps=" << steps << " time=" << time
+            << " pulse_duration=" << input.pulse_duration
             << " operator_error=" << operator_error
-            << " solution_norm=" << final_norm << '\n';
+            << " solution_norm=" << final_norm
+            << " l2_error=" << l2_error
+            << " relative_l2_error=" << relative_l2_error << '\n';
   std::cout << "Wrote example_advection.mesh and example_advection.gf\n";
   boba::finalize();
   return 0;
