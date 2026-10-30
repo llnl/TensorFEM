@@ -22,6 +22,8 @@
  * with a tensor train matrix and tensor train vectors.
  *
  * Run: make example_advection && ./example_advection_cpu.out --theta 0.7853981633974483
+ * To display the final solution, start GLVis with `glvis -server`, then add
+ * `--visualize` to the example command.
  */
 
 #include "../common.hpp"
@@ -42,7 +44,7 @@ constexpr double absolute_tolerance = 1.0e-14;
 double bump(double s)
 {
   const double distance = s - 0.5;
-  const double radius_squared = radius * radius;
+  constexpr double radius_squared = radius * radius;
   if (std::abs(distance) >= radius)
   {
     return 0.0;
@@ -58,6 +60,7 @@ struct Parameters
   double theta = std::acos(-1.0) / 4.0;
   double end_time = 0.5;
   double cfl = 0.5;
+  bool visualize = false;
 };
 
 using Train = boba::TensorTrain<2, space, double>;
@@ -115,6 +118,8 @@ int main(int argc, char* argv[])
   args.add_optional_argument(input.theta, "-t", "--theta", "Advection angle in radians.");
   args.add_optional_argument(input.end_time, "-T", "--end_time", "Final time.");
   args.add_optional_argument(input.cfl, "-C", "--cfl", "CFL scaling in (0, 1].");
+  args.add_optional_argument(input.visualize, "-v", "--visualize",
+                             "Show the final solution in GLVis on localhost:19916.");
   args.parse_check();
 
   boba_always_assert(input.resolution > 0, "Resolution must be positive.");
@@ -231,6 +236,10 @@ int main(int argc, char* argv[])
   const double final_norm = boba::norm_frobenius(final_tensor);
   boba_always_assert(std::isfinite(final_norm) && final_norm > 0.0,
                      "Expected a finite, nonzero solution driven by inflow.");
+  if (input.visualize)
+  {
+    tensor_fem::glvis_visualize(mesh, grid_function, "Advection final solution");
+  }
   std::cout << "theta=" << input.theta << " a=" << a << " b=" << b
             << " steps=" << steps << " time=" << time
             << " operator_error=" << operator_error
