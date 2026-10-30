@@ -355,36 +355,40 @@ int main(int argc, char* argv[])
     boba_always_assert(l2_error <= input.max_l2_error,
                        "L2 error exceeds the requested verification limit.");
   }
-#ifndef TENSORFEM_CI
-  std::ofstream mesh_file("example_advection.mesh");
-  boba_always_assert(mesh_file.good(), "Cannot open example_advection.mesh.");
-  mesh.Print(mesh_file);
-  grid_function.Save("example_advection.gf");
-#endif
+  if constexpr (not tensor_fem::is_tensorfem_ci())
+  {
+    std::ofstream mesh_file("example_advection.mesh");
+    boba_always_assert(mesh_file.good(), "Cannot open example_advection.mesh.");
+    mesh.Print(mesh_file);
+    grid_function.Save("example_advection.gf");
+  }
 
   const double final_norm = boba::norm_frobenius(final_tensor);
   boba_always_assert(std::isfinite(final_norm),
                      "Expected a finite solution driven by inflow.");
   if (input.visualize)
   {
-#ifdef TENSORFEM_CI
-    std::cerr << "GLVis visualization is disabled in this CI build.\n";
-#else
-    mfem::socketstream visualization_socket;
-    visualization_socket.open("localhost", 19916);
-    if (visualization_socket.good())
+    if constexpr (tensor_fem::is_tensorfem_ci())
     {
-      tensor_fem::glvis_visualize(mesh, grid_function, visualization_socket,
-                                 "Advection final solution");
+      std::cerr << "GLVis visualization is disabled in this CI build.\n";
     }
     else
     {
-      std::cerr << "Could not connect to GLVis on localhost:19916. Start"
-                << " `glvis -server` before using --visualize. The solution"
-                << " was saved to example_advection.mesh and"
-                << " example_advection.gf.\n";
+      mfem::socketstream visualization_socket;
+      visualization_socket.open("localhost", 19916);
+      if (visualization_socket.good())
+      {
+        tensor_fem::glvis_visualize(mesh, grid_function, visualization_socket,
+                                   "Advection final solution");
+      }
+      else
+      {
+        std::cerr << "Could not connect to GLVis on localhost:19916. Start"
+                  << " `glvis -server` before using --visualize. The solution"
+                  << " was saved to example_advection.mesh and"
+                  << " example_advection.gf.\n";
+      }
     }
-#endif
   }
   std::cout << "theta=" << input.theta << " a=" << a << " b=" << b
             << " steps=" << steps << " time=" << time
@@ -393,9 +397,10 @@ int main(int argc, char* argv[])
             << " solution_norm=" << final_norm
             << " l2_error=" << l2_error
             << " relative_l2_error=" << relative_l2_error << '\n';
-#ifndef TENSORFEM_CI
-  std::cout << "Wrote example_advection.mesh and example_advection.gf\n";
-#endif
+  if constexpr (not tensor_fem::is_tensorfem_ci())
+  {
+    std::cout << "Wrote example_advection.mesh and example_advection.gf\n";
+  }
   boba::finalize();
   return 0;
 }
