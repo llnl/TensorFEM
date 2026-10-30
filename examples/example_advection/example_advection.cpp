@@ -105,6 +105,7 @@ struct Parameters
   double end_time = 0.5;
   double pulse_duration = 0.25;
   double cfl = 0.5;
+  double max_l2_error = 0.0;
   bool visualize = false;
 };
 
@@ -174,6 +175,8 @@ int main(int argc, char* argv[])
   args.add_optional_argument(input.pulse_duration, "-D", "--pulse_duration",
                              "Duration of the smooth inflow pulse.");
   args.add_optional_argument(input.cfl, "-C", "--cfl", "CFL scaling in (0, 1].");
+  args.add_optional_argument(input.max_l2_error, "-E", "--max_l2_error",
+                             "Absolute L2 error limit for verification; 0 disables it.");
   args.add_optional_argument(input.visualize, "-v", "--visualize",
                              "Show the final solution in GLVis on localhost:19916.");
   args.parse_check();
@@ -187,6 +190,8 @@ int main(int argc, char* argv[])
                      "Pulse duration must be finite and positive.");
   boba_always_assert(std::isfinite(input.cfl) && input.cfl > 0.0 && input.cfl <= 1.0,
                      "CFL must lie in (0, 1].");
+  boba_always_assert(std::isfinite(input.max_l2_error) && input.max_l2_error >= 0.0,
+                     "The L2 error limit must be finite and nonnegative.");
 
   const double a = std::cos(input.theta);
   const double b = std::sin(input.theta);
@@ -345,17 +350,41 @@ int main(int argc, char* argv[])
                                    std::numeric_limits<double>::quiet_NaN();
   boba_always_assert(std::isfinite(l2_error) && std::isfinite(exact_l2_norm),
                      "The exact-solution error and norm must be finite.");
+  if (input.max_l2_error > 0.0)
+  {
+    boba_always_assert(l2_error <= input.max_l2_error,
+                       "L2 error exceeds the requested verification limit.");
+  }
+#ifndef TENSORFEM_CI
   std::ofstream mesh_file("example_advection.mesh");
   boba_always_assert(mesh_file.good(), "Cannot open example_advection.mesh.");
   mesh.Print(mesh_file);
   grid_function.Save("example_advection.gf");
+#endif
 
   const double final_norm = boba::norm_frobenius(final_tensor);
   boba_always_assert(std::isfinite(final_norm),
                      "Expected a finite solution driven by inflow.");
   if (input.visualize)
   {
-    tensor_fem::glvis_visualize(mesh, grid_function, "Advection final solution");
+#ifdef TENSORFEM_CI
+    std::cerr << "GLVis visualization is disabled in this CI build.\n";
+#else
+    mfem::socketstream visualization_socket;
+    visualization_socket.open("localhost", 19916);
+    if (visualization_socket.good())
+    {
+      tensor_fem::glvis_visualize(mesh, grid_function, visualization_socket,
+                                 "Advection final solution");
+    }
+    else
+    {
+      std::cerr << "Could not connect to GLVis on localhost:19916. Start"
+                << " `glvis -server` before using --visualize. The solution"
+                << " was saved to example_advection.mesh and"
+                << " example_advection.gf.\n";
+    }
+#endif
   }
   std::cout << "theta=" << input.theta << " a=" << a << " b=" << b
             << " steps=" << steps << " time=" << time
@@ -364,7 +393,9 @@ int main(int argc, char* argv[])
             << " solution_norm=" << final_norm
             << " l2_error=" << l2_error
             << " relative_l2_error=" << relative_l2_error << '\n';
+#ifndef TENSORFEM_CI
   std::cout << "Wrote example_advection.mesh and example_advection.gf\n";
+#endif
   boba::finalize();
   return 0;
 }
