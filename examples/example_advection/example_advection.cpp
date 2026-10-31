@@ -33,9 +33,11 @@
  * characteristic reaches an inflow side, then equals the spatial bump
  * times the pulse at the time that characteristic entered the domain.
  *
- * Run: make example_advection && ./example_advection_cpu.out --theta 0.7853981633974483
+ * Run:
+ *     make example_advection && ./example_advection_cpu.out --theta 0.7853981633974483
  * To display the final solution, start GLVis with `glvis -server`, then add
- * `--visualize` to the example command.
+ * `--visualize` to the example command:
+ *     make example_advection && ./example_advection_cpu.out --theta 0.7853981633974483 --visualize
  * To check convergence at T=0.1, run
  * `python3 examples/example_advection/run_convergence.py`.
  */

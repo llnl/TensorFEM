@@ -40,11 +40,11 @@ Please see [tpls/README.md](tpls/README.md) to install the third-party libraries
 
 Before starting with TensorFEM, we recommend that you are familiar with BoBa and MFEM.
 
-The [assembly example](examples/example_assembly) shows how to form tensorized solvers from a bilinear form.
+The [assembly example](examples/example_advection) shows how to form tensorized solvers from a bilinear form.
 ```
 make clean
-make example_assembly
-./example_assembly_cpu.out
+make example_advection
+./example_advection*out --visualize  --resolution 32  --theta 5.49778714378
 ```
 Once you have the GLVis plots of the solution, we recommend the following options:
 - Flatten the plot (Hold Ctrl -)
