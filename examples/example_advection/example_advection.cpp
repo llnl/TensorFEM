@@ -28,8 +28,10 @@
  * The upwind DG flux uses prescribed data only where (a,b) dot n < 0;
  * outflow is determined by the interior solution. MFEM assembles the DG
  * advection, mass, and boundary operators. BoBa carries out SSP RK3 steps
- * with a tensor train matrix and tensor train vectors. Backward
- * characteristics give an exact solution: the value is zero until a
+ * with either the full matrix and vectors or their tensor train forms.
+ * Scheme 0 runs and compares both after every time step, 1 runs tensor
+ * trains, and 2 runs full.
+ * Backward characteristics give an exact solution: the value is zero until a
  * characteristic reaches an inflow side, then equals the spatial bump
  * times the pulse at the time that characteristic entered the domain.
  * The default Gauss-Legendre basis may be changed to Gauss-Lobatto to
@@ -52,6 +54,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <type_traits>
 #include <vector>
 
 namespace
@@ -112,12 +115,15 @@ struct Parameters
   double pulse_duration = 0.25;
   double cfl = 0.5;
   double max_l2_error = 0.0;
+  size_t scheme = 0;
   bool gauss_lobatto = false;
   bool visualize = false;
 };
 
 using Train = boba::TensorTrain<2, space, double>;
 using TrainMatrix = boba::TensorTrainMatrix<2, space, double>;
+using FullVector = boba::Vector<space, double>;
+using FullMatrix = boba::Matrix<space, double>;
 
 void apply_inverse_dg_mass_blocks(const mfem::FiniteElementSpace& fes,
                                   const mfem::SparseMatrix& mass,
@@ -180,9 +186,10 @@ void apply_inverse_dg_mass_blocks(const mfem::FiniteElementSpace& fes,
                      "Every DG DOF must belong to an element mass block.");
 }
 
-Train right_hand_side(const TrainMatrix& spatial_operator,
-                      const Train& source,
-                      const Train& state,
+template<class Operator, class State>
+State right_hand_side(const Operator& spatial_operator,
+                      const State& source,
+                      const State& state,
                       double time,
                       double pulse_duration)
 {
@@ -190,22 +197,29 @@ Train right_hand_side(const TrainMatrix& spatial_operator,
   auto inflow = source;
   inflow *= time_pulse(time, pulse_duration);
   result += inflow;
-  result.round();
+  if constexpr (std::is_same_v<State, Train>)
+  {
+    result.round();
+  }
   return result;
 }
 
-void step_ssp_rk3(const TrainMatrix& spatial_operator,
-                  const Train& source,
+template<class Operator, class State>
+void step_ssp_rk3(const Operator& spatial_operator,
+                  const State& source,
                   double time,
                   double dt,
                   double pulse_duration,
-                  Train& state)
+                  State& state)
 {
   auto update = right_hand_side(spatial_operator, source, state,
                                 time, pulse_duration);
   update *= dt;
   auto stage_one = state + update;
-  stage_one.round();
+  if constexpr (std::is_same_v<State, Train>)
+  {
+    stage_one.round();
+  }
 
   update = right_hand_side(spatial_operator, source, stage_one,
                            time + dt, pulse_duration);
@@ -215,7 +229,10 @@ void step_ssp_rk3(const TrainMatrix& spatial_operator,
   auto old_state = state;
   old_state *= 0.75;
   stage_two += old_state;
-  stage_two.round();
+  if constexpr (std::is_same_v<State, Train>)
+  {
+    stage_two.round();
+  }
 
   update = right_hand_side(spatial_operator, source, stage_two,
                            time + 0.5 * dt, pulse_duration);
@@ -225,7 +242,10 @@ void step_ssp_rk3(const TrainMatrix& spatial_operator,
   old_state = state;
   old_state *= 1.0 / 3.0;
   next_state += old_state;
-  next_state.round();
+  if constexpr (std::is_same_v<State, Train>)
+  {
+    next_state.round();
+  }
   state = std::move(next_state);
 }
 
@@ -249,6 +269,8 @@ int main(int argc, char* argv[])
   args.add_optional_argument(input.cfl, "-C", "--cfl", "CFL scaling in (0, 1].");
   args.add_optional_argument(input.max_l2_error, "-E", "--max_l2_error",
                              "Absolute L2 error limit for verification; 0 disables it.");
+  args.add_optional_argument(input.scheme, "-S", "--scheme",
+                             "Scheme: 0 - both, 1 - tensor train, 2 - full.");
   args.add_optional_argument(input.gauss_lobatto, "-L", "--gauss_lobatto",
                              "Use Gauss-Lobatto DG nodes (full element mass blocks).");
   args.add_optional_argument(input.visualize, "-v", "--visualize",
@@ -256,6 +278,7 @@ int main(int argc, char* argv[])
   args.parse_check();
 
   boba_always_assert(input.resolution > 0, "Resolution must be positive.");
+  boba_always_assert_le(input.scheme, size_t{2}, "Scheme must be 0, 1, or 2.");
   boba_always_assert(input.order <= 4, "This small dense-assembly example supports orders 0 through 4.");
   boba_always_assert(std::isfinite(input.theta), "Theta must be finite.");
   boba_always_assert(std::isfinite(input.end_time) && input.end_time > 0.0,
@@ -341,7 +364,7 @@ int main(int argc, char* argv[])
   dense_advection.reset();
   apply_inverse_dg_mass_blocks(fes, mass_matrix, host_advection, source_mfem);
 
-  boba::Matrix<space, double> advection_mfem = host_advection;
+  FullMatrix advection_mfem = host_advection;
   auto advection_matrix = tensor_fem::mfem_ordering_to_tensorfem_ordering(
     std::move(advection_mfem), n, input.order + 1, n);
   auto source_mfem_boba = tensor_fem::vector_to_boba_vector(source_mfem);
@@ -351,38 +374,46 @@ int main(int argc, char* argv[])
   //
   // Form compressed objects
   //
-  auto spatial_operator = boba::compress_to_TensorTrainMatrix<2>(
-    advection_matrix, {mode_size, mode_size}, {mode_size, mode_size},
-    relative_tolerance, absolute_tolerance);
-  auto source = boba::compress_to_TensorTrain<2>(
-    boba::reshape<2>(source_vector, {mode_size, mode_size}),
-    relative_tolerance, absolute_tolerance);
+  TrainMatrix spatial_operator;
+  Train source;
+  double operator_error = 0.0;
+  if (input.scheme != 2)
+  {
+    spatial_operator = boba::compress_to_TensorTrainMatrix<2>(
+      advection_matrix, {mode_size, mode_size}, {mode_size, mode_size},
+      relative_tolerance, absolute_tolerance);
+    source = boba::compress_to_TensorTrain<2>(
+      boba::reshape<2>(source_vector, {mode_size, mode_size}),
+      relative_tolerance, absolute_tolerance);
 
   //
   // Verify compressed operator
   //
-  boba::Vector<boba::host_space, double> host_probe({total_dofs});
-  auto probe_view = host_probe.view();
-  for (size_t i = 0; i < total_dofs; ++i)
-  {
-    probe_view(i) = std::sin(0.17 * static_cast<double>(i + 1));
+    boba::Vector<boba::host_space, double> host_probe({total_dofs});
+    auto probe_view = host_probe.view();
+    for (size_t i = 0; i < total_dofs; ++i)
+    {
+      probe_view(i) = std::sin(0.17 * static_cast<double>(i + 1));
+    }
+    FullVector probe = host_probe;
+    auto full_update = advection_matrix * probe;
+    full_update += source_vector;
+    auto probe_train = boba::compress_to_TensorTrain<2>(
+      boba::reshape<2>(probe, {mode_size, mode_size}),
+      relative_tolerance, absolute_tolerance);
+    auto compressed_update = right_hand_side(spatial_operator, source, probe_train,
+                                             0.5 * input.pulse_duration,
+                                             input.pulse_duration);
+    operator_error = boba::norm_difference_inf(
+      full_update, boba::flatten(compressed_update.decompress()));
+    boba_always_assert(operator_error < 1.0e-8,
+                       "Tensor train update differs from the assembled MFEM update.");
   }
-  boba::Vector<space, double> probe = host_probe;
-  auto full_update = advection_matrix * probe;
-  full_update += source_vector;
-  auto probe_train = boba::compress_to_TensorTrain<2>(
-    boba::reshape<2>(probe, {mode_size, mode_size}),
-    relative_tolerance, absolute_tolerance);
-  auto compressed_update = right_hand_side(spatial_operator, source, probe_train,
-                                           0.5 * input.pulse_duration,
-                                           input.pulse_duration);
-  const double operator_error = boba::norm_difference_inf(
-    full_update, boba::flatten(compressed_update.decompress()));
-  boba_always_assert(operator_error < 1.0e-8,
-                     "Tensor train update differs from the assembled MFEM update.");
 
   Train solution({mode_size, mode_size});
   solution.fill_with_zeros();
+  FullVector full_solution({total_dofs});
+  full_solution.fill_with_zeros();
 
   //
   // Perform timestepping
@@ -393,13 +424,32 @@ int main(int argc, char* argv[])
                         ((2.0 * static_cast<double>(input.order) + 1.0) * speed_sum);
   double time = 0.0;
   size_t steps = 0;
+  double scheme_difference = 0.0;
+  double max_scheme_difference = 0.0;
 
   while (time < input.end_time)
   {
     const double remaining = input.end_time - time;
     const double dt = std::min(max_dt, remaining);
-    step_ssp_rk3(spatial_operator, source, time, dt,
-                 input.pulse_duration, solution);
+    if (input.scheme != 2)
+    {
+      step_ssp_rk3(spatial_operator, source, time, dt,
+                   input.pulse_duration, solution);
+    }
+    if (input.scheme != 1)
+    {
+      step_ssp_rk3(advection_matrix, source_vector, time, dt,
+                   input.pulse_duration, full_solution);
+    }
+    if (input.scheme == 0)
+    {
+      scheme_difference = boba::norm_difference_inf(
+        boba::flatten(solution.decompress()), full_solution);
+      max_scheme_difference = std::max(max_scheme_difference, scheme_difference);
+      boba_always_assert_le(scheme_difference,
+                            1.0e-8 * (1.0 + boba::norm_inf(full_solution)),
+                            "Tensor train and full solutions differ at a time step.");
+    }
     time = (remaining <= max_dt) ? input.end_time : time + dt;
     ++steps;
   }
@@ -407,8 +457,8 @@ int main(int argc, char* argv[])
   //
   // Verification
   //
-  auto final_tensor = solution.decompress();
-  auto final_vector = boba::flatten(final_tensor);
+  FullVector final_vector = input.scheme == 2 ? full_solution :
+                            boba::flatten(solution.decompress());
   auto grid_function = tensor_fem::make_gf_2d(mesh, fes, final_vector, input.order);
   mfem::FunctionCoefficient exact_coefficient([=](const mfem::Vector& point)
   {
@@ -441,7 +491,7 @@ int main(int argc, char* argv[])
     grid_function.Save("example_advection.gf");
   }
 
-  const double final_norm = boba::norm_frobenius(final_tensor);
+  const double final_norm = boba::norm_frobenius(final_vector);
   boba_always_assert(std::isfinite(final_norm),
                      "Expected a finite solution driven by inflow.");
   if (input.visualize)
@@ -468,10 +518,20 @@ int main(int argc, char* argv[])
       }
     }
   }
-  std::cout << "theta=" << input.theta << " a=" << a << " b=" << b
+  std::cout << "scheme=" << input.scheme
+            << " theta=" << input.theta << " a=" << a << " b=" << b
             << " steps=" << steps << " time=" << time
-            << " pulse_duration=" << input.pulse_duration
-            << " operator_error=" << operator_error
+            << " pulse_duration=" << input.pulse_duration;
+  if (input.scheme != 2)
+  {
+    std::cout << " operator_error=" << operator_error;
+  }
+  if (input.scheme == 0)
+  {
+    std::cout << " scheme_difference=" << scheme_difference
+              << " max_scheme_difference=" << max_scheme_difference;
+  }
+  std::cout
             << " solution_norm=" << final_norm
             << " l2_error=" << l2_error
             << " relative_l2_error=" << relative_l2_error << '\n';
