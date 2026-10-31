@@ -20,6 +20,10 @@ BOBA_TOP_DIR=${TENSORFEM_TPL_INSTALL_DIR}/tpl/BoBa
 TENSORFEM_SRC_DIR = ${TENSORFEM_TOP_DIR}/source
 TENSORFEM_INC_DIR = ${TENSORFEM_TOP_DIR}/include/tensorfem
 
+ifeq ($(TENSORFEM_CI),1)
+override BOBA_CI := 1
+endif
+
 include ${BOBA_TOP_DIR}/Makefile_boba
 
 ifeq ($(IS_MATRIX), matrix)
@@ -28,7 +32,7 @@ else
 CXXFLAGS := ${CXXFLAGS} -Wno-sign-conversion
 endif
 
-ifdef TENSORFEM_CI
+ifeq ($(TENSORFEM_CI),1)
 CXX_DEFINES := ${CXX_DEFINES} -DTENSORFEM_CI
 endif
 
