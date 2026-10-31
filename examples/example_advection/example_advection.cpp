@@ -211,14 +211,8 @@ int main(int argc, char* argv[])
   mfem::FiniteElementSpace fes(&mesh, &fec);
   const long double dense_matrix_bytes = sizeof(double) *
     static_cast<long double>(fes.GetVSize()) * fes.GetVSize();
-  if (dense_matrix_bytes > 256.0L * 1024.0L * 1024.0L)
-  {
-    std::cerr << "Resolution " << n << " would require more than 256 MiB for"
-              << " one dense 2D matrix. Use a smaller mesh until 2D operator"
-              << " compression is optimized.\n";
-    boba::finalize();
-    return 1;
-  }
+  boba_always_assert_le(dense_matrix_bytes, 8.0L * 1024.0L * 1024.0L * 1024.0L,
+                        "Dense 2D matrix exceeds 8 GiB.");
 
   auto velocity_x = [a](double, double) { return a; };
   auto velocity_y = [b](double, double) { return b; };
