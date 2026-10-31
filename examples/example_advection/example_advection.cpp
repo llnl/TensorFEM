@@ -49,8 +49,10 @@
 #include "../common.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -377,14 +379,20 @@ int main(int argc, char* argv[])
   TrainMatrix spatial_operator;
   Train source;
   double operator_error = 0.0;
+  double tt_compression_seconds = 0.0;
+  double tt_runtime_seconds = 0.0;
+  double full_runtime_seconds = 0.0;
   if (input.scheme != 2)
   {
+    const auto compression_start = std::chrono::steady_clock::now();
     spatial_operator = boba::compress_to_TensorTrainMatrix<2>(
       advection_matrix, {mode_size, mode_size}, {mode_size, mode_size},
       relative_tolerance, absolute_tolerance);
     source = boba::compress_to_TensorTrain<2>(
       boba::reshape<2>(source_vector, {mode_size, mode_size}),
       relative_tolerance, absolute_tolerance);
+    tt_compression_seconds = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - compression_start).count();
 
   //
   // Verify compressed operator
@@ -433,13 +441,19 @@ int main(int argc, char* argv[])
     const double dt = std::min(max_dt, remaining);
     if (input.scheme != 2)
     {
+      const auto step_start = std::chrono::steady_clock::now();
       step_ssp_rk3(spatial_operator, source, time, dt,
                    input.pulse_duration, solution);
+      tt_runtime_seconds += std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - step_start).count();
     }
     if (input.scheme != 1)
     {
+      const auto step_start = std::chrono::steady_clock::now();
       step_ssp_rk3(advection_matrix, source_vector, time, dt,
                    input.pulse_duration, full_solution);
+      full_runtime_seconds += std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - step_start).count();
     }
     if (input.scheme == 0)
     {
@@ -470,6 +484,14 @@ int main(int argc, char* argv[])
     &mfem::IntRules.Get(mfem::Geometry::SQUARE, 40);
 
   const double l2_error = grid_function.ComputeL2Error(exact_coefficient, integration_rules);
+  double full_l2_error = 0.0;
+  if (input.scheme == 0)
+  {
+    auto full_grid_function = tensor_fem::make_gf_2d(
+      mesh, fes, full_solution, input.order);
+    full_l2_error = full_grid_function.ComputeL2Error(
+      exact_coefficient, integration_rules);
+  }
   const double exact_l2_norm = mfem::ComputeLpNorm(2.0, exact_coefficient, mesh,
                                                    integration_rules);
   const double relative_l2_error = exact_l2_norm > 0.0 ?
@@ -478,10 +500,20 @@ int main(int argc, char* argv[])
 
   boba_always_assert(std::isfinite(l2_error) && std::isfinite(exact_l2_norm),
                      "The exact-solution error and norm must be finite.");
+  if (input.scheme == 0)
+  {
+    boba_always_assert(std::isfinite(full_l2_error),
+                       "The full-solution L2 error must be finite.");
+  }
   if (input.max_l2_error > 0.0)
   {
     boba_always_assert(l2_error <= input.max_l2_error,
                        "L2 error exceeds the requested verification limit.");
+    if (input.scheme == 0)
+    {
+      boba_always_assert(full_l2_error <= input.max_l2_error,
+                         "Full-solution L2 error exceeds the requested limit.");
+    }
   }
   if constexpr (not tensor_fem::is_tensorfem_ci())
   {
@@ -518,7 +550,8 @@ int main(int argc, char* argv[])
       }
     }
   }
-  std::cout << "scheme=" << input.scheme
+  std::cout << std::setprecision(12)
+            << "scheme=" << input.scheme
             << " theta=" << input.theta << " a=" << a << " b=" << b
             << " steps=" << steps << " time=" << time
             << " pulse_duration=" << input.pulse_duration;
@@ -529,7 +562,18 @@ int main(int argc, char* argv[])
   if (input.scheme == 0)
   {
     std::cout << " scheme_difference=" << scheme_difference
-              << " max_scheme_difference=" << max_scheme_difference;
+              << " max_scheme_difference=" << max_scheme_difference
+              << " tt_l2_error=" << l2_error
+              << " full_l2_error=" << full_l2_error;
+  }
+  if (input.scheme != 2)
+  {
+    std::cout << " tt_compression_seconds=" << tt_compression_seconds
+              << " tt_runtime_seconds=" << tt_runtime_seconds;
+  }
+  if (input.scheme != 1)
+  {
+    std::cout << " full_runtime_seconds=" << full_runtime_seconds;
   }
   std::cout
             << " solution_norm=" << final_norm
