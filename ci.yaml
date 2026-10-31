@@ -70,3 +70,5 @@
       inputs: "--resolution 8 --end_time 0.1 --theta 6.283185307179586 --max_l2_error 0.04"
     theta_minus_3pi_over_2:
       inputs: "--resolution 8 --end_time 0.1 --theta -4.71238898038 --max_l2_error 0.04"
+    gauss_lobatto_mass_blocks:
+      inputs: "--resolution 8 --end_time 0.1 --gauss_lobatto --max_l2_error 0.04"

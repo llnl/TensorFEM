@@ -32,6 +32,8 @@
  * characteristics give an exact solution: the value is zero until a
  * characteristic reaches an inflow side, then equals the spatial bump
  * times the pulse at the time that characteristic entered the domain.
+ * The default Gauss-Legendre basis may be changed to Gauss-Lobatto to
+ * exercise the general element-block mass inverse.
  *
  * Run:
  *     make example_advection && ./example_advection_cpu.out --theta 0.7853981633974483
@@ -49,6 +51,8 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <memory>
+#include <vector>
 
 namespace
 {
@@ -108,11 +112,73 @@ struct Parameters
   double pulse_duration = 0.25;
   double cfl = 0.5;
   double max_l2_error = 0.0;
+  bool gauss_lobatto = false;
   bool visualize = false;
 };
 
 using Train = boba::TensorTrain<2, space, double>;
 using TrainMatrix = boba::TensorTrainMatrix<2, space, double>;
+
+void apply_inverse_dg_mass_blocks(const mfem::FiniteElementSpace& fes,
+                                  const mfem::SparseMatrix& mass,
+                                  boba::Matrix<boba::host_space, double>& operator_matrix,
+                                  mfem::Vector& source)
+{
+  const int total_dofs = fes.GetVSize();
+  boba_always_assert_equal(operator_matrix.rows(), static_cast<size_t>(total_dofs),
+                           "Mass and operator row counts differ.");
+  boba_always_assert_equal(operator_matrix.cols(), static_cast<size_t>(total_dofs),
+                           "Advection operator must be square.");
+  boba_always_assert_equal(source.Size(), total_dofs,
+                           "Mass and source sizes differ.");
+
+  auto operator_view = operator_matrix.view();
+  std::vector<bool> visited(static_cast<size_t>(total_dofs), false);
+  mfem::Array<int> dofs;
+  for (int element = 0; element < fes.GetNE(); ++element)
+  {
+    fes.GetElementDofs(element, dofs);
+    const int block_size = dofs.Size();
+    mfem::DenseMatrix local_mass(block_size);
+    mfem::DenseMatrix local_operator(block_size, total_dofs);
+    mfem::Vector local_source(block_size), updated_source(block_size);
+    for (int i = 0; i < block_size; ++i)
+    {
+      const int row = dofs[i];
+      boba_always_assert(row >= 0 && row < total_dofs,
+                         "DG mass block contains an invalid DOF.");
+      boba_always_assert(!visited[static_cast<size_t>(row)],
+                         "DG elements must have disjoint DOFs.");
+      visited[static_cast<size_t>(row)] = true;
+      local_source(i) = source(row);
+      for (int j = 0; j < block_size; ++j)
+      {
+        local_mass(i, j) = mass(row, dofs[j]);
+      }
+      for (int col = 0; col < total_dofs; ++col)
+      {
+        local_operator(i, col) = operator_view({static_cast<size_t>(row),
+                                                static_cast<size_t>(col)});
+      }
+    }
+
+    mfem::DenseMatrixInverse inverse_mass(local_mass, true);
+    inverse_mass.Mult(local_operator);
+    inverse_mass.Mult(local_source, updated_source);
+    for (int i = 0; i < block_size; ++i)
+    {
+      const size_t row = static_cast<size_t>(dofs[i]);
+      source(dofs[i]) = updated_source(i);
+      for (int col = 0; col < total_dofs; ++col)
+      {
+        operator_view({row, static_cast<size_t>(col)}) = local_operator(i, col);
+      }
+    }
+  }
+  boba_always_assert(std::all_of(visited.begin(), visited.end(),
+                                 [](bool value) { return value; }),
+                     "Every DG DOF must belong to an element mass block.");
+}
 
 Train right_hand_side(const TrainMatrix& spatial_operator,
                       const Train& source,
@@ -183,6 +249,8 @@ int main(int argc, char* argv[])
   args.add_optional_argument(input.cfl, "-C", "--cfl", "CFL scaling in (0, 1].");
   args.add_optional_argument(input.max_l2_error, "-E", "--max_l2_error",
                              "Absolute L2 error limit for verification; 0 disables it.");
+  args.add_optional_argument(input.gauss_lobatto, "-L", "--gauss_lobatto",
+                             "Use Gauss-Lobatto DG nodes (full element mass blocks).");
   args.add_optional_argument(input.visualize, "-v", "--visualize",
                              "Show the final solution in GLVis on localhost:19916.");
   args.parse_check();
@@ -207,15 +275,15 @@ int main(int argc, char* argv[])
   const size_t n = input.resolution;
   const size_t mode_size = n * (input.order + 1);
   auto mesh = tensor_fem::make_cartesian_mesh_2d(n, n, 1.0, 1.0);
-  mfem::DG_FECollection fec(input.order, 2, mfem::BasisType::GaussLegendre);
+  mfem::DG_FECollection fec(input.order, 2,
+    input.gauss_lobatto ? mfem::BasisType::GaussLobatto :
+                          mfem::BasisType::GaussLegendre);
   mfem::FiniteElementSpace fes(&mesh, &fec);
   const long double dense_matrix_bytes = sizeof(double) *
     static_cast<long double>(fes.GetVSize()) * fes.GetVSize();
   boba_always_assert_le(dense_matrix_bytes, 8.0L * 1024.0L * 1024.0L * 1024.0L,
                         "Dense 2D matrix exceeds 8 GiB.");
 
-  auto velocity_x = [a](double, double) { return a; };
-  auto velocity_y = [b](double, double) { return b; };
   // On a horizontal side g(y)=0; on a vertical side g(x)=0.
   auto boundary_data = [](double x, double y) { return bump(x) + bump(y); };
 
@@ -239,45 +307,46 @@ int main(int argc, char* argv[])
     new mfem::NonconservativeDGTraceIntegrator(velocity, -1.0));
   advection_form.Assemble(0);
   advection_form.Finalize(0);
-  auto advection_matrix = tensor_fem::mfem_ordering_to_tensorfem_ordering(
-    tensor_fem::bilinear_form_to_matrix(advection_form),
-    n, input.order + 1, n);
-  auto mass_matrix = tensor_fem::Mass_matrix_2d(
-    fes, [](double, double) { return 1.0; }, input.order, n, n);
-  auto boundary_vector = tensor_fem::make_inflow_boundary_vector_2d(
-    fes, boundary_data, velocity_x, velocity_y, input.order, n, n);
+  auto mass_matrix = tensor_fem::Mass_matrix_2d_mfem_sparse(
+    fes, [](double, double) { return 1.0; });
 
-  // The affine Cartesian mesh and Gauss-Legendre nodal basis give a diagonal
-  // exact mass matrix. Check that before using its inverse as a row scaling.
-  boba::Matrix<boba::host_space, double> host_mass = mass_matrix;
-  auto mass_view = host_mass.const_view();
-  boba::Vector<boba::host_space, double> host_inverse_mass({host_mass.rows()});
-  auto inverse_view = host_inverse_mass.view();
-  double largest_diagonal = 0.0;
-  double largest_off_diagonal = 0.0;
-  for (size_t row = 0; row < host_mass.rows(); ++row)
-  {
-    const double diagonal = mass_view({row, row});
-    boba_always_assert(diagonal > 0.0, "Mass matrix must be positive definite.");
-    inverse_view(row) = 1.0 / diagonal;
-    largest_diagonal = std::max(largest_diagonal, std::abs(diagonal));
-    for (size_t col = 0; col < host_mass.cols(); ++col)
-    {
-      if (row != col)
-      {
-        largest_off_diagonal = std::max(largest_off_diagonal,
-                                        std::abs(mass_view({row, col})));
-      }
-    }
-  }
-  boba_always_assert(largest_off_diagonal <= 1.0e-11 * largest_diagonal,
-                     "Mass matrix is not diagonal at the requested order.");
   //
   // Generate source
   //
-  boba::Vector<space, double> inverse_mass = host_inverse_mass;
-  boba::apply_as_diagonal_left_in_place(inverse_mass, advection_matrix);
-  auto source_vector = boba::elementwise_product(inverse_mass, boundary_vector);
+  mfem::FunctionCoefficient inflow_data([&boundary_data](const mfem::Vector& point)
+  {
+    return boundary_data(point(0), point(1));
+  });
+  auto source_mfem = tensor_fem::inflow_boundary_vector_core(fes, velocity,
+                                                              inflow_data);
+
+  //
+  // Apply inverse mass and reorder
+  //
+  // DG mass matrices have independent element blocks; curved cells can make
+  // those blocks non-diagonal.
+  const size_t total_dofs = static_cast<size_t>(fes.GetVSize());
+  boba::Matrix<boba::host_space, double> host_advection({total_dofs, total_dofs});
+  auto host_advection_view = host_advection.view();
+  std::unique_ptr<mfem::DenseMatrix> dense_advection(
+    advection_form.SpMat().ToDenseMatrix());
+  for (size_t row = 0; row < total_dofs; ++row)
+  {
+    for (size_t col = 0; col < total_dofs; ++col)
+    {
+      host_advection_view({row, col}) = (*dense_advection)(
+        static_cast<int>(row), static_cast<int>(col));
+    }
+  }
+  dense_advection.reset();
+  apply_inverse_dg_mass_blocks(fes, mass_matrix, host_advection, source_mfem);
+
+  boba::Matrix<space, double> advection_mfem = host_advection;
+  auto advection_matrix = tensor_fem::mfem_ordering_to_tensorfem_ordering(
+    std::move(advection_mfem), n, input.order + 1, n);
+  auto source_mfem_boba = tensor_fem::vector_to_boba_vector(source_mfem);
+  auto source_vector = tensor_fem::mfem_ordering_to_tensorfem_ordering(
+    source_mfem_boba, n, input.order + 1, n);
 
   //
   // Form compressed objects
@@ -288,6 +357,29 @@ int main(int argc, char* argv[])
   auto source = boba::compress_to_TensorTrain<2>(
     boba::reshape<2>(source_vector, {mode_size, mode_size}),
     relative_tolerance, absolute_tolerance);
+
+  //
+  // Verify compressed operator
+  //
+  boba::Vector<boba::host_space, double> host_probe({total_dofs});
+  auto probe_view = host_probe.view();
+  for (size_t i = 0; i < total_dofs; ++i)
+  {
+    probe_view(i) = std::sin(0.17 * static_cast<double>(i + 1));
+  }
+  boba::Vector<space, double> probe = host_probe;
+  auto full_update = advection_matrix * probe;
+  full_update += source_vector;
+  auto probe_train = boba::compress_to_TensorTrain<2>(
+    boba::reshape<2>(probe, {mode_size, mode_size}),
+    relative_tolerance, absolute_tolerance);
+  auto compressed_update = right_hand_side(spatial_operator, source, probe_train,
+                                           0.5 * input.pulse_duration,
+                                           input.pulse_duration);
+  const double operator_error = boba::norm_difference_inf(
+    full_update, boba::flatten(compressed_update.decompress()));
+  boba_always_assert(operator_error < 1.0e-8,
+                     "Tensor train update differs from the assembled MFEM update.");
 
   Train solution({mode_size, mode_size});
   solution.fill_with_zeros();
