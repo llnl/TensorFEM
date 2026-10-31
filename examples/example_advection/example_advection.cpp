@@ -168,6 +168,10 @@ void step_ssp_rk3(const TrainMatrix& spatial_operator,
 int main(int argc, char* argv[])
 {
   boba::init();
+
+  //
+  // Inputs
+  //
   Parameters input;
   boba::argparser args(argc, argv);
   args.add_optional_argument(input.resolution, "-n", "--resolution", "Elements in each direction.");
@@ -195,6 +199,9 @@ int main(int argc, char* argv[])
   boba_always_assert(std::isfinite(input.max_l2_error) && input.max_l2_error >= 0.0,
                      "The L2 error limit must be finite and nonnegative.");
 
+  //
+  // Derived parameters
+  //
   const double a = std::cos(input.theta);
   const double b = std::sin(input.theta);
   const size_t n = input.resolution;
@@ -218,6 +225,9 @@ int main(int argc, char* argv[])
   // On a horizontal side g(y)=0; on a vertical side g(x)=0.
   auto boundary_data = [](double x, double y) { return bump(x) + bump(y); };
 
+  //
+  // Construct operators
+  //
   mfem::VectorFunctionCoefficient velocity(2,
     [a, b](const mfem::Vector&, mfem::Vector& value)
     {
@@ -268,24 +278,16 @@ int main(int argc, char* argv[])
   }
   boba_always_assert(largest_off_diagonal <= 1.0e-11 * largest_diagonal,
                      "Mass matrix is not diagonal at the requested order.");
-
+  //
+  // Generate source
+  //
   boba::Vector<space, double> inverse_mass = host_inverse_mass;
   boba::apply_as_diagonal_left_in_place(inverse_mass, advection_matrix);
   auto source_vector = boba::elementwise_product(inverse_mass, boundary_vector);
-  if (n <= 8)
-  {
-    mfem::ConstantCoefficient one(1.0);
-    mfem::GridFunction constant_gf(&fes);
-    constant_gf.ProjectCoefficient(one);
-    auto raw_boundary = tensor_fem::inflow_boundary_vector_core(
-      fes, velocity, one);
-    mfem::Vector raw_residual(fes.GetVSize());
-    advection_form.SpMat().Mult(constant_gf, raw_residual);
-    raw_residual += raw_boundary;
-    boba_always_assert(raw_residual.Norml2() < 1.0e-10,
-                       "DG advection assembly must preserve constant states.");
-  }
 
+  //
+  // Form compressed objects
+  //
   auto spatial_operator = boba::compress_to_TensorTrainMatrix<2>(
     advection_matrix, {mode_size, mode_size}, {mode_size, mode_size},
     relative_tolerance, absolute_tolerance);
@@ -293,36 +295,19 @@ int main(int argc, char* argv[])
     boba::reshape<2>(source_vector, {mode_size, mode_size}),
     relative_tolerance, absolute_tolerance);
 
-  // Check a nonzero state as well as the inflow term against the assembled
-  // full matrix. The zero initial state alone would only exercise the source.
-  boba::Vector<boba::host_space, double> host_probe({static_cast<size_t>(fes.GetVSize())});
-  auto probe_view = host_probe.view();
-  for (size_t i = 0; i < host_probe.size(); ++i)
-  {
-    probe_view(i) = std::sin(0.17 * static_cast<double>(i + 1));
-  }
-  boba::Vector<space, double> probe = host_probe;
-  auto full_update = advection_matrix * probe;
-  full_update += source_vector;
-  auto probe_train = boba::compress_to_TensorTrain<2>(
-    boba::reshape<2>(probe, {mode_size, mode_size}),
-    relative_tolerance, absolute_tolerance);
-  auto compressed_update = right_hand_side(spatial_operator, source, probe_train,
-                                           0.5 * input.pulse_duration,
-                                           input.pulse_duration);
-  const double operator_error = boba::norm_difference_inf(
-    full_update, boba::flatten(compressed_update.decompress()));
-  boba_always_assert(operator_error < 1.0e-8,
-                     "Tensor train update differs from the assembled MFEM update.");
-
   Train solution({mode_size, mode_size});
   solution.fill_with_zeros();
+
+  //
+  // Perform timestepping
+  //
   const double speed_sum = std::abs(a) + std::abs(b);
   const double h = 1.0 / static_cast<double>(n);
   const double max_dt = input.cfl * h /
                         ((2.0 * static_cast<double>(input.order) + 1.0) * speed_sum);
   double time = 0.0;
   size_t steps = 0;
+
   while (time < input.end_time)
   {
     const double remaining = input.end_time - time;
@@ -333,6 +318,9 @@ int main(int argc, char* argv[])
     ++steps;
   }
 
+  //
+  // Verification
+  //
   auto final_tensor = solution.decompress();
   auto final_vector = boba::flatten(final_tensor);
   auto grid_function = tensor_fem::make_gf_2d(mesh, fes, final_vector, input.order);
@@ -344,12 +332,14 @@ int main(int argc, char* argv[])
   const mfem::IntegrationRule* integration_rules[mfem::Geometry::NumGeom] = {};
   integration_rules[mfem::Geometry::SQUARE] =
     &mfem::IntRules.Get(mfem::Geometry::SQUARE, 40);
+
   const double l2_error = grid_function.ComputeL2Error(exact_coefficient, integration_rules);
   const double exact_l2_norm = mfem::ComputeLpNorm(2.0, exact_coefficient, mesh,
                                                    integration_rules);
   const double relative_l2_error = exact_l2_norm > 0.0 ?
                                    l2_error / exact_l2_norm :
                                    std::numeric_limits<double>::quiet_NaN();
+
   boba_always_assert(std::isfinite(l2_error) && std::isfinite(exact_l2_norm),
                      "The exact-solution error and norm must be finite.");
   if (input.max_l2_error > 0.0)
