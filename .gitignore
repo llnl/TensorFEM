@@ -4,7 +4,6 @@ log*
 
 # mfem
 *.gf
-*.mesh
 
 *exe
 *out
@@ -46,7 +45,6 @@ install
 CAL_LIB
 
 *.gf
-*.mesh
 *.fes
 
 # other
