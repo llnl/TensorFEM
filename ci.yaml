@@ -48,3 +48,27 @@
   example_assembly:
     default:
       inputs: " "
+
+  example_advection:
+    theta_0:
+      inputs: "--resolution 8 --end_time 0.1 --theta 0 --max_l2_error 0.04"
+    theta_pi_over_4:
+      inputs: "--resolution 8 --end_time 0.1 --theta 0.7853981633974483 --max_l2_error 0.04"
+    theta_pi_over_2:
+      inputs: "--resolution 8 --end_time 0.1 --theta 1.5707963267948966 --max_l2_error 0.04"
+    theta_3pi_over_4:
+      inputs: "--resolution 8 --end_time 0.1 --theta 2.356194490192345 --max_l2_error 0.04"
+    theta_pi:
+      inputs: "--resolution 8 --end_time 0.1 --theta 3.141592653589793 --max_l2_error 0.04"
+    theta_5pi_over_4:
+      inputs: "--resolution 8 --end_time 0.1 --theta 3.9269908169872414 --max_l2_error 0.04"
+    theta_3pi_over_2:
+      inputs: "--resolution 8 --end_time 0.1 --theta 4.71238898038469 --max_l2_error 0.04"
+    theta_7pi_over_4:
+      inputs: "--resolution 8 --end_time 0.1 --theta 5.497787143782138 --max_l2_error 0.04"
+    theta_2pi:
+      inputs: "--resolution 8 --end_time 0.1 --theta 6.283185307179586 --max_l2_error 0.04"
+    theta_minus_3pi_over_2:
+      inputs: "--resolution 8 --end_time 0.1 --theta -4.71238898038 --max_l2_error 0.04"
+    gauss_lobatto_mass_blocks:
+      inputs: "--resolution 8 --end_time 0.1 --gauss_lobatto --max_l2_error 0.04"

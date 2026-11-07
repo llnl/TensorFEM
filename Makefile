@@ -51,6 +51,7 @@ all: \
 	tutorial_qpt_extraction \
 	integration \
 	example_assembly \
+	example_advection \
 
 #
 # TensorFEM
@@ -92,6 +93,18 @@ example_assembly${NAME_FLAG}.out: example_assembly${NAME_FLAG}.o boba${NAME_FLAG
 
 example_assembly${NAME_FLAG}.o: ${EXAMPLES_DIR}/example_assembly/example_assembly.cpp tensor_fem${NAME_FLAG}.o boba${NAME_FLAG}.o
 	${COMPILE} ${OPTS} ${DEPFLAGS} -c ${EXAMPLES_DIR}/example_assembly/example_assembly.cpp -o example_assembly${NAME_FLAG}.o
+
+## example_advection
+##
+
+example_advection: example_advection${NAME_FLAG}.out
+	echo "Done making $@${NAME_FLAG}.out"
+
+example_advection${NAME_FLAG}.out: example_advection${NAME_FLAG}.o boba${NAME_FLAG}.o
+	${LINK} -o $@ $^ ${LIBS}
+
+example_advection${NAME_FLAG}.o: ${EXAMPLES_DIR}/example_advection/example_advection.cpp tensor_fem${NAME_FLAG}.o boba${NAME_FLAG}.o
+	${COMPILE} ${OPTS} ${DEPFLAGS} -c $< -o $@
 
 ## tutorial_qpt_extraction
 ##
